@@ -55,7 +55,7 @@ import Player from '#/engine/entity/Player.js';
 import EntityLifeCycle from '#/engine/entity/EntityLifeCycle.js';
 import { NpcList, PlayerList } from '#/engine/entity/EntityList.js';
 import { isClientConnected, NetworkPlayer } from '#/engine/entity/NetworkPlayer.js';
-import { EntityQueueState } from '#/engine/entity/EntityQueueRequest.js';
+import { EntityQueueState, PlayerQueueType } from '#/engine/entity/EntityQueueRequest.js';
 import { PlayerTimerType } from '#/engine/entity/EntityTimer.js';
 
 import UpdateRebootTimer from '#/network/server/model/UpdateRebootTimer.js';
@@ -94,8 +94,12 @@ import { PlayerLoading } from '#/engine/entity/PlayerLoading.js';
 import ScriptPointer from '#/engine/script/ScriptPointer.js';
 import Isaac from '#/io/Isaac.js';
 import LoggerEventType from '#/server/logger/LoggerEventType.js';
-import MoveSpeed from '#/engine/entity/MoveSpeed.js';
 import ScriptVarType from '#/cache/config/ScriptVarType.js';
+import InputTrackingEvent from './entity/tracking/InputEvent.js';
+import { SessionLog } from '#/engine/entity/tracking/SessionLog.js';
+import { type GenericLoginThreadResponse, isPlayerLoginResponse, isPlayerLogoutResponse } from '#/server/login/index.d.js';
+import { FriendThreadMessage } from '#/server/friend/FriendThread.js';
+import Visibility from '#/engine/entity/Visibility.js';
 
 const priv = forge.pki.privateKeyFromPem(Environment.STANDALONE_BUNDLE ? await (await fetch('data/config/private.pem')).text() : fs.readFileSync('data/config/private.pem', 'ascii'));
 
@@ -120,8 +124,8 @@ class World {
     private static readonly PLAYER_SAVERATE: number = 500; // 5m
     private static readonly PLAYER_COORDLOGRATE: number = 50; // 30s
 
-    private static readonly TIMEOUT_SOCKET_IDLE: number = Environment.NODE_DEBUG_SOCKET ? 60000 : 50; // 30s with no data- disconnect client
-    private static readonly TIMEOUT_SOCKET_LOGOUT: number = Environment.NODE_DEBUG_SOCKET ? 60000 : 100; // 60s with no client- remove player from processing
+    private static readonly TIMEOUT_NO_CONNECTION: number = Environment.NODE_DEBUG_SOCKET ? 60000 : 50; // 30s with no connection (16 ticks in osrs)
+    private static readonly TIMEOUT_NO_RESPONSE: number = Environment.NODE_DEBUG_SOCKET ? 60000 : 100; // 60s without any response
 
     // the game/zones map
     readonly gameMap: GameMap;
@@ -156,6 +160,8 @@ class World {
 
     vars: Int32Array = new Int32Array(); // var shared
     varsString: string[] = [];
+
+    sessionLogs: SessionLog[] = [];
 
     constructor() {
         this.gameMap = new GameMap(Environment.NODE_MEMBERS);
@@ -512,6 +518,16 @@ class World {
                 }
             }
 
+            // todo: move this into PLAYER_COORDLOGRATE if memory usage is sane?
+            if (this.sessionLogs.length > 0) {
+                this.loggerThread.postMessage({
+                    type: 'session_log',
+                    logs: this.sessionLogs
+                });
+
+                this.sessionLogs = [];
+            }
+
             this.cycleStats[WorldStat.CYCLE] = Date.now() - start; // set the main logic stat here, before telemetry.
 
             this.lastCycleStats[WorldStat.CYCLE] = this.cycleStats[WorldStat.CYCLE];
@@ -660,7 +676,7 @@ class World {
                 if (this.currentTick % World.AFK_EVENTRATE === 0) {
                     // (normal) 1/12 chance every 5 minutes of setting an afk event state (even distrubution 60/5)
                     // (afk) double the chance?
-                    player.afkEventReady = Math.random() < (player.zonesAfk() ? 0.1666 : 0.0833);
+                    player.afkEventReady = player.visibility === Visibility.DEFAULT && Math.random() < (player.zonesAfk() ? 0.1666 : 0.0833);
                 }
 
                 if (isClientConnected(player) && player.decodeIn()) {
@@ -676,8 +692,7 @@ class World {
                             player.masks |= InfoProt.PLAYER_FACE_ENTITY.id;
                         }
 
-                        if ((!player.busy() && player.opcalled) || player.opucalled) {
-                            // opu in osrs doesnt have a busy check
+                        if (!player.busy() && player.opcalled) {
                             player.moveClickRequest = false;
                         } else {
                             player.moveClickRequest = true;
@@ -698,14 +713,6 @@ class World {
                     }
                 }
 
-                if (this.currentTick - player.lastResponse >= World.TIMEOUT_SOCKET_LOGOUT) {
-                    // x-logged / timed out for 60s: logout
-                    player.loggedOut = true;
-                } else if (this.currentTick - player.lastResponse >= World.TIMEOUT_SOCKET_IDLE) {
-                    // x-logged / timed out for 30s: attempt logout
-                    player.tryLogout = true;
-                }
-
                 // - client input tracking
                 player.processInputTracking();
 
@@ -714,7 +721,10 @@ class World {
                 }
             } catch (err) {
                 console.error(err);
-                this.removePlayer(player);
+                if (isClientConnected(player)) {
+                    player.logout();
+                    player.client.close();
+                }
             }
         }
 
@@ -827,7 +837,7 @@ class World {
                 // - primary queue
                 // - weak queue
                 player.processQueues();
-                if (!player.loggedOut) {
+                if (!player.loggingOut) {
                     // - timers
                     player.processTimers(PlayerTimerType.NORMAL);
                     // - soft timers
@@ -847,7 +857,10 @@ class World {
                 }
             } catch (err) {
                 console.error(err);
-                this.removePlayer(player);
+                if (isClientConnected(player)) {
+                    player.logout();
+                    player.client.close();
+                }
             }
         }
 
@@ -858,33 +871,54 @@ class World {
         const start: number = Date.now();
 
         for (const player of this.players) {
-            if (player.loggedOut) {
-                player.tryLogout = true;
-                player.clearInteraction();
+            let force = false;
+            if (this.shutdown || this.currentTick - player.lastResponse >= World.TIMEOUT_NO_RESPONSE) {
+                // world shutdown or x-logged / timed out for 60s: force logout
+                player.loggingOut = true;
+                force = true;
+            } else if (this.currentTick - player.lastConnected >= World.TIMEOUT_NO_CONNECTION) {
+                // connection lost for 30s: request idle logout
+                player.requestIdleLogout = true;
             }
 
-            if (!player.tryLogout) {
-                continue;
-            }
-
-            player.closeModal();
-
-            if (player.canAccess() && player.queue.head() === null && player.engineQueue.head() === null) {
-                const script = ScriptProvider.getByTriggerSpecific(ServerTriggerType.LOGOUT, -1, -1);
-                if (!script) {
-                    printError('LOGOUT TRIGGER IS BROKEN!');
-                    continue;
+            if (player.requestLogout || player.requestIdleLogout) {
+                if (this.currentTick >= player.preventLogoutUntil) {
+                    player.loggingOut = true;
+                } else if (player.requestLogout && player.preventLogoutMessage !== null) {
+                    player.messageGame(player.preventLogoutMessage); // engine message type in osrs
+                    player.preventLogoutMessage = null;
                 }
+                player.requestLogout = false;
+                player.requestIdleLogout = false;
+            }
 
-                const state = ScriptRunner.init(script, player);
-                state.pointerAdd(ScriptPointer.ProtectedActivePlayer);
-                ScriptRunner.execute(state);
+            if (player.loggingOut && (force || this.currentTick >= player.preventLogoutUntil)) {
+                player.closeModal();
 
-                const result = state.popInt();
-                if (result === 1) {
+                let queueDiscardable = true;
+                for (let request = player.queue.head(); request !== null; request = player.queue.next()) {
+                    if (request.type === PlayerQueueType.LONG) {
+                        const logoutAction = request.args[0];
+                        if (logoutAction === 1) {
+                            // ^discard
+                            continue;
+                        }
+                    }
+                    queueDiscardable = false;
+                    break;
+                }
+                if (player.canAccess() && player.engineQueue.head() === null && queueDiscardable) {
+                    const script = ScriptProvider.getByTriggerSpecific(ServerTriggerType.LOGOUT, -1, -1);
+                    if (!script) {
+                        printError('LOGOUT TRIGGER IS BROKEN!');
+                        continue;
+                    }
+
+                    const state = ScriptRunner.init(script, player);
+                    state.pointerAdd(ScriptPointer.ProtectedActivePlayer);
+                    ScriptRunner.execute(state);
+
                     this.removePlayer(player);
-                } else {
-                    player.tryLogout = false;
                 }
             }
         }
@@ -937,6 +971,13 @@ class World {
 
                     other.onReconnect();
 
+                    this.friendThread.postMessage({
+                        type: 'player_login',
+                        username: other.username,
+                        chatModePrivate: other.privateChat,
+                        staffLvl: other.staffModLevel
+                    });
+
                     continue player;
                 }
             }
@@ -971,7 +1012,7 @@ class World {
             try {
                 // if it throws then there was no available pid. otherwise guaranteed to not be -1.
                 pid = this.getNextPid(isClientConnected(player) ? player.client : null);
-            } catch (e) {
+            } catch (_) {  // eslint-disable-line @typescript-eslint/no-unused-vars
                 // world full
                 if (isClientConnected(player)) {
                     player.addSessionLog(LoggerEventType.ENGINE, 'Tried to log in - world full');
@@ -1098,7 +1139,10 @@ class World {
                 player.encodeOut();
             } catch (err) {
                 console.error(err);
-                this.removePlayer(player);
+                if (isClientConnected(player)) {
+                    player.logout();
+                    player.client.close();
+                }
             }
         }
         this.cycleStats[WorldStat.CLIENT_OUT] = Date.now() - start;
@@ -1185,20 +1229,20 @@ class World {
     }
 
     private processShutdown(): void {
+        for (const player of this.players) {
+            if (isClientConnected(player)) {
+                player.logout();
+                player.client.close();
+            }
+        }
+
         const duration = this.currentTick - this.shutdownTick;
         if (duration >= 1024) {
             // force remove all players, they had their chances to finish processing
             for (const player of this.players) {
+                player.addSessionLog(LoggerEventType.ENGINE, 'Player force removed!');
+                printError(`Player '${player.username}' force removed!`);
                 this.removePlayer(player);
-            }
-        }
-
-        for (const player of this.players) {
-            player.loggedOut = true;
-
-            if (isClientConnected(player)) {
-                player.logout(); // see ya
-                player.client.close();
             }
         }
 
@@ -1265,6 +1309,7 @@ class World {
 
         npc.x = npc.startX;
         npc.z = npc.startZ;
+        npc.isActive = true;
 
         const zone = this.gameMap.getZone(npc.x, npc.z, npc.level);
         zone.enter(npc);
@@ -1289,6 +1334,7 @@ class World {
         const zone = this.gameMap.getZone(npc.x, npc.z, npc.level);
         const adjustedDuration = this.scaleByPlayerCount(duration);
         zone.leave(npc);
+        npc.isActive = false;
 
         switch (npc.blockWalk) {
             case BlockWalk.NPC:
@@ -1487,6 +1533,7 @@ class World {
 
     addPlayer(player: Player): void {
         this.newPlayers.add(player);
+        player.isActive = true;
     }
 
     sendPrivateChatModeToFriendsServer(player: Player): void {
@@ -1521,6 +1568,8 @@ class World {
         this.players.remove(player.pid);
         changeNpcCollision(player.width, player.x, player.z, player.level, false);
         player.cleanup();
+
+        player.isActive = false;
 
         player.addSessionLog(LoggerEventType.MODERATOR, 'Logged out');
         this.flushPlayer(player);
@@ -1575,11 +1624,6 @@ class World {
         }
 
         if (Number(player.username37 & 0x1fffffn) !== name37) {
-            return null;
-        }
-
-        if (player.loggedOut) {
-            // todo: proper?
             return null;
         }
 
@@ -1740,16 +1784,14 @@ class World {
         }
     }
 
-    onLoginMessage(msg: any) {
-        const { type } = msg;
-
-        if (type === 'player_login') {
+    onLoginMessage(msg: GenericLoginThreadResponse) {
+        if (isPlayerLoginResponse(msg)) {
             const { socket } = msg;
             if (!this.loginRequests.has(socket)) {
                 return;
             }
 
-            const { reply, username } = msg;
+            const { reply } = msg;
             const client = this.loginRequests.get(socket)!;
             this.loginRequests.delete(socket);
 
@@ -1788,11 +1830,22 @@ class World {
                 client.send(Uint8Array.from([16]));
                 client.close();
                 return;
+            } else if (reply === 9) {
+                // logging in to p2p on a f2p account
+                client.send(Uint8Array.from([12]));
+                client.close();
+                return;
             }
 
-            const { lowMemory, reconnecting, staffmodlevel, muted_until } = msg;
-            const save = reply === 0 ? msg.save : new Uint8Array();
+            const { account_id, username, lowMemory, reconnecting, staffmodlevel, muted_until, members } = msg;
+            const save = msg.save ?? new Uint8Array();
 
+            // if (reconnecting && !this.getPlayerByUsername(username)) {
+            //     // rejected
+            //     client.send(Uint8Array.from([11]));
+            //     client.close();
+            //     return;
+            // } else
             if (!save && !reconnecting) {
                 // rejected
                 client.send(Uint8Array.from([11]));
@@ -1803,16 +1856,32 @@ class World {
             try {
                 const player = PlayerLoading.load(username, new Packet(save), client);
 
+                player.account_id = account_id;
                 player.reconnecting = reconnecting;
-                player.staffModLevel = staffmodlevel;
+                player.staffModLevel = staffmodlevel ?? 0;
                 player.lowMemory = lowMemory;
                 player.muted_until = muted_until ? new Date(muted_until) : null;
+                player.members = members;
 
                 if (this.logoutRequests.has(username)) {
                     // already logged in (on another world)
                     client.send(Uint8Array.from([5]));
                     client.close();
                     return;
+                }
+
+                if (!Environment.NODE_MEMBERS && !this.gameMap.isFreeToPlay(player.x, player.z)) {
+                    // in a p2p zone when logging into f2p
+                    if(player.members) {
+                        client.send(Uint8Array.from([17]));
+                        client.close();
+                        this.loginThread.postMessage({
+                            type: 'player_force_logout',
+                            username: username
+                        });
+                        return;
+                    }
+                    player.teleport(3221, 3219, 0);
                 }
 
                 this.newPlayers.add(player);
@@ -1832,7 +1901,7 @@ class World {
                     username: username
                 });
             }
-        } else if (type === 'player_logout') {
+        } else if (isPlayerLogoutResponse(msg)) {
             const { username, success } = msg;
             if (!this.logoutRequests.has(username)) {
                 return;
@@ -1844,7 +1913,8 @@ class World {
         }
     }
 
-    onFriendMessage({ opcode, data }: { opcode: FriendsServerOpcodes; data: any }) {
+    onFriendMessage(msg: FriendThreadMessage) {
+        const { opcode, data } = msg;
         try {
             if (opcode === FriendsServerOpcodes.UPDATE_FRIENDLIST) {
                 const username37 = BigInt(data.username37);
@@ -1896,6 +1966,40 @@ class World {
                 const chat = data.chat;
 
                 player.write(new MessagePrivate(fromPlayer, pmId, fromPlayerStaffLvl, chat));
+            } else if (opcode === FriendsServerOpcodes.RELAY_MUTE) {
+                const { username, muted_until } = data;
+
+                const player = this.getPlayerByUsername(username);
+                if (player) {
+                    player.muted_until = muted_until ? new Date(muted_until) : null;
+                }
+            } else if (opcode === FriendsServerOpcodes.RELAY_KICK) {
+                const { username } = data;
+
+                const player = this.getPlayerByUsername(username);
+                if (player) {
+                    player.loggingOut = true;
+
+                    if (isClientConnected(player)) {
+                        player.logout();
+                        player.client.close();
+                    }
+                }
+            } else if (opcode === FriendsServerOpcodes.RELAY_BROADCAST) {
+                const { message } = data;
+
+                this.broadcastMes(message);
+            } else if (opcode === FriendsServerOpcodes.RELAY_SHUTDOWN) {
+                const { duration } = data;
+
+                this.rebootTimer(duration);
+            } else if (opcode === FriendsServerOpcodes.RELAY_TRACK) {
+                const { username, state } = data;
+
+                const player = this.getPlayerByUsername(username);
+                if (player) {
+                    player.submitInput = state;
+                }
             } else {
                 printError('Unknown friend message: ' + opcode);
             }
@@ -1989,8 +2093,6 @@ class World {
             const username = World.loginBuf.gjstr();
             const password = World.loginBuf.gjstr();
 
-            // todo: record login attempt?
-
             if (username.length < 1 || username.length > 12) {
                 client.send(Uint8Array.from([3]));
                 client.close();
@@ -2003,7 +2105,7 @@ class World {
                 return;
             }
 
-            if (this.getTotalPlayers() > 2000) {
+            if (this.getTotalPlayers() > 750) {
                 client.send(Uint8Array.from([7]));
                 client.close();
                 return;
@@ -2027,7 +2129,8 @@ class World {
                 password,
                 uid,
                 lowMemory,
-                reconnecting: client.opcode === 18
+                reconnecting: client.opcode === 18,
+                hasSave: client.opcode === 18 ? typeof this.getPlayerByUsername(username) !== 'undefined' : false
             });
         } else {
             client.terminate();
@@ -2036,10 +2139,9 @@ class World {
         client.opcode = -1;
     }
 
-    addSessionLog(event_type: LoggerEventType, username: string, session_uuid: string, coord: number, message: string, ...args: string[]) {
-        this.loggerThread.postMessage({
-            type: 'session_log',
-            username,
+    addSessionLog(event_type: LoggerEventType, account_id: number, session_uuid: string, coord: number, message: string, ...args: string[]) {
+        this.sessionLogs.push({
+            account_id,
             session_uuid,
             timestamp: Date.now(),
             coord,
@@ -2049,6 +2151,15 @@ class World {
     }
 
     notifyPlayerBan(staff: string, username: string, until: number) {
+        const other = this.getPlayerByUsername(username);
+        if (other) {
+            other.loggingOut = true;
+            if (isClientConnected(other)) {
+                other.logout();
+                other.client.close();
+            }
+        }
+
         this.loginThread.postMessage({
             type: 'player_ban',
             staff,
@@ -2058,6 +2169,11 @@ class World {
     }
 
     notifyPlayerMute(staff: string, username: string, until: number) {
+        const other = this.getPlayerByUsername(username);
+        if (other) {
+            other.muted_until = new Date(until);
+        }
+
         this.loginThread.postMessage({
             type: 'player_mute',
             staff,
@@ -2073,6 +2189,16 @@ class World {
             coord: player.coord,
             offender,
             reason
+        });
+    }
+
+    submitInputTracking(username: string, session_uuid: string, events: InputTrackingEvent[]) {
+        this.loggerThread.postMessage({
+            type: 'input_track',
+            username,
+            session_uuid,
+            timestamp: Date.now(),
+            events
         });
     }
 

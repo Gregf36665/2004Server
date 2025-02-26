@@ -15,7 +15,7 @@ import ServerTriggerType from '#/engine/script/ServerTriggerType.js';
 
 import { PlayerQueueType, ScriptArgument } from '#/engine/entity/EntityQueueRequest.js';
 import { PlayerTimerType } from '#/engine/entity/EntityTimer.js';
-import { isBufferFull, isClientConnected } from '#/engine/entity/NetworkPlayer.js';
+import { isBufferFull } from '#/engine/entity/NetworkPlayer.js';
 import { CoordGrid } from '#/engine/CoordGrid.js';
 import CameraInfo from '#/engine/entity/CameraInfo.js';
 import Interaction from '#/engine/entity/Interaction.js';
@@ -166,7 +166,7 @@ const PlayerOps: CommandHandlers = {
     }),
 
     [ScriptOpcode.BUILDAPPEARANCE]: checkedHandler(ActivePlayer, state => {
-        state.activePlayer.generateAppearance(check(state.popInt(), InvTypeValid).id);
+        state.activePlayer.buildAppearance(check(state.popInt(), InvTypeValid).id);
     }),
 
     [ScriptOpcode.CAM_LOOKAT]: checkedHandler(ActivePlayer, state => {
@@ -518,11 +518,13 @@ const PlayerOps: CommandHandlers = {
     }),
 
     [ScriptOpcode.P_LOGOUT]: checkedHandler(ProtectedActivePlayer, state => {
-        state.activePlayer.tryLogout = true;
+        state.activePlayer.requestLogout = true;
     }),
 
-    [ScriptOpcode.LOGGEDOUT]: checkedHandler(ActivePlayer, state => {
-        state.pushInt(state.activePlayer.loggedOut ? 1 : 0);
+    [ScriptOpcode.P_PREVENTLOGOUT]: checkedHandler(ProtectedActivePlayer, state => {
+        // a short antilog can overwrite a long one in osrs, so no checks here
+        state.activePlayer.preventLogoutMessage = check(state.popString(), StringNotNull);
+        state.activePlayer.preventLogoutUntil = World.currentTick + check(state.popInt(), NumberNotNull);
     }),
 
     [ScriptOpcode.IF_SETCOLOUR]: checkedHandler(ActivePlayer, state => {
@@ -776,7 +778,7 @@ const PlayerOps: CommandHandlers = {
 
     // https://x.com/JagexAsh/status/1653407769989349377
     [ScriptOpcode.BUSY]: state => {
-        state.pushInt(state.activePlayer.busy() ? 1 : 0);
+        state.pushInt(state.activePlayer.busy() || state.activePlayer.loggingOut ? 1 : 0);
     },
 
     // https://x.com/JagexAsh/status/1791053667228856563
@@ -991,14 +993,16 @@ const PlayerOps: CommandHandlers = {
 
     [ScriptOpcode.SETGENDER]: (state) => {
         const gender = check(state.popInt(), GenderValid);
-        // convert idkit
+        // convert idkit, have to use a mapping cause order + there's not always an equivalence
         for (let i = 0; i < 7; i++) {
-            state.activePlayer.body[i] = -1;
-            for (let j = 0; j < IdkType.count; j++) {
-                if (!IdkType.get(j).disable && IdkType.get(j).type == i + (gender === 0 ? 0 : 7)) {
-                    state.activePlayer.body[i] = j;
-                    break;
+            if(gender === 1) {
+                state.activePlayer.body[i] = Player.MALE_FEMALE_MAP.get(state.activePlayer.body[i]) ?? -1;
+            } else {
+                if(i == 1) {
+                    state.activePlayer.body[i] = 14;
+                    continue;
                 }
+                state.activePlayer.body[i] = Player.FEMALE_MALE_MAP.get(state.activePlayer.body[i]) ?? -1;
             }
         }
         state.activePlayer.gender = gender;

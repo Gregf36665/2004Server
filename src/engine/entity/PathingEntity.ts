@@ -14,6 +14,7 @@ import MoveSpeed from '#/engine/entity/MoveSpeed.js';
 import EntityLifeCycle from '#/engine/entity/EntityLifeCycle.js';
 import MoveStrategy from '#/engine/entity/MoveStrategy.js';
 import Obj from '#/engine/entity/Obj.js';
+import NonPathingEntity from '#/engine/entity/NonPathingEntity.js';
 
 import LocType from '#/cache/config/LocType.js';
 
@@ -21,9 +22,7 @@ import Environment from '#/util/Environment.js';
 
 import { CollisionFlag, CollisionType } from '@2004scape/rsmod-pathfinder';
 
-import { canTravel, changeNpcCollision, changePlayerCollision, findNaivePath, findPath, findPathToEntity, findPathToLoc, isApproached, isMapBlocked, reachedEntity, reachedLoc, reachedObj } from '#/engine/GameMap.js';
-import NonPathingEntity from '#/engine/entity/NonPathingEntity.js';
-import Visibility from '#/engine/entity/Visibility.js';
+import { canTravel, changeNpcCollision, changePlayerCollision, findNaivePath, findPath, findPathToEntity, findPathToLoc, isApproached, reachedEntity, reachedLoc, reachedObj } from '#/engine/GameMap.js';
 
 type TargetSubject = {
     type: number;
@@ -35,7 +34,7 @@ export type TargetOp = ServerTriggerType | NpcMode;
 export default abstract class PathingEntity extends Entity {
     // constructor properties
     protected readonly moveRestrict: MoveRestrict;
-    readonly blockWalk: BlockWalk;
+    blockWalk: BlockWalk;
     moveStrategy: MoveStrategy;
     private readonly coordmask: number;
     readonly entitymask: number;
@@ -416,15 +415,6 @@ export default abstract class PathingEntity extends Entity {
             return reachedLoc(this.level, this.x, this.z, target.x, target.z, target.width, target.length, this.width, target.angle, target.shape, forceapproach);
         }
         // instanceof Obj
-        const reachedAdjacent: boolean = reachedEntity(this.level, this.x, this.z, target.x, target.z, target.width, target.length, this.width);
-        if (isMapBlocked(target.x, target.z, target.level)) {
-            // picking up off of tables
-            return reachedAdjacent;
-        }
-        if (!this.hasWaypoints() && reachedAdjacent) {
-            // picking up while walktrigger prevents movement
-            return true;
-        }
         return reachedObj(this.level, this.x, this.z, target.x, target.z, target.width, target.length, this.width);
     }
 
@@ -557,9 +547,9 @@ export default abstract class PathingEntity extends Entity {
         }
     }
 
-    setInteraction(interaction: Interaction, target: Entity, op: TargetOp, subject?: TargetSubject): void {
-        if (target instanceof Player && target.visibility === Visibility.HARD) {
-            return;
+    setInteraction(interaction: Interaction, target: Entity, op: TargetOp, subject?: TargetSubject): boolean {
+        if (!target.isValid(this instanceof Player ? this.hash64 : undefined)) {
+            return false;
         }
 
         this.target = target;
@@ -590,6 +580,8 @@ export default abstract class PathingEntity extends Entity {
         if (interaction === Interaction.SCRIPT) {
             this.pathToTarget();
         }
+
+        return true;
     }
 
     clearInteraction(): void {

@@ -14,6 +14,32 @@ import Packet from '#/io/Packet.js';
 export default class LoginServer {
     private server: WebSocketServer;
 
+    rejectLoginForSafety(s: WebSocket, replyTo: number) {
+        // Send opcode 7 ('Please try again') if something has gone wrong
+        // during login attempt, which may be resolved by simply retrying.
+        s.send(JSON.stringify({
+            replyTo,
+            response: 7
+        }));
+    }
+
+    async wouldResetSaveFile(newSaveBytes: Buffer, profile: string, username: string) {
+        // check whether `save`, if saved to disk, would have reset `username`'s progress.
+        // it does this by checking whether the player's tick count has gone backwards.
+        if (!fs.existsSync(`data/players/${profile}/${username}.sav`)) {
+            // No existing save - no problem.
+            return false;
+        }
+        const existingSaveRaw = await fsp.readFile(`data/players/${profile}/${username}.sav`);
+        const existingSave = PlayerLoading.load('tmp', new Packet(existingSaveRaw), null);
+        const newSave = PlayerLoading.load('tmp', new Packet(newSaveBytes), null);
+        if (existingSave.playtime > newSave.playtime) {
+            // Int32, 1 per tick logged in. Should wrap only after insane amount of years.
+            return true;
+        }
+        return false;
+    }
+
     constructor() {
         this.server = new WebSocketServer({ port: Environment.LOGIN_PORT, host: '0.0.0.0' }, () => {
             printInfo(`Login server listening on port ${Environment.LOGIN_PORT}`);
@@ -31,7 +57,7 @@ export default class LoginServer {
                             login_time: null
                         }).where('logged_in', '=', nodeId).execute();
                     } else if (type === 'player_login') {
-                        const { replyTo, username, password, uid, socket, remoteAddress, reconnecting } = msg;
+                        const { replyTo, username, password, uid, socket, remoteAddress, reconnecting, hasSave } = msg;
 
                         const ipBan = await db.selectFrom('ipban').selectAll()
                             .where('ip', '=', remoteAddress).executeTakeFirst();
@@ -109,6 +135,14 @@ export default class LoginServer {
                             return;
                         }
 
+                        if (Environment.NODE_MEMBERS && !account.members) {
+                            s.send(JSON.stringify({
+                                replyTo,
+                                response: 9
+                            }));
+                            return;
+                        }
+
                         if (reconnecting && account.logged_in === nodeId) {
                             await db.insertInto('session').values({
                                 uuid: socket,
@@ -120,10 +154,32 @@ export default class LoginServer {
                                 ip: remoteAddress
                             }).execute();
 
-                            s.send(JSON.stringify({
-                                replyTo,
-                                response: 2
-                            }));
+                            if (!hasSave) {
+                                const save = await fsp.readFile(`data/players/${profile}/${username}.sav`);
+                                if (!save || !PlayerLoading.verify(new Packet(save))) {
+                                    // Extreme safety check for savefile existing but having bad data on read:
+                                    console.error('on reconnect, account_id %s had invalid save data on disk', account.id);
+                                    this.rejectLoginForSafety(s, replyTo);
+                                }
+                                s.send(JSON.stringify({
+                                    replyTo,
+                                    response: 2,
+                                    account_id: account.id,
+                                    staffmodlevel: account.staffmodlevel,
+                                    muted_until: account.muted_until,
+                                    save: save.toString('base64'),
+                                    members: account.members
+                                }));
+                            } else {
+                                s.send(JSON.stringify({
+                                    replyTo,
+                                    response: 2,
+                                    account_id: account.id,
+                                    staffmodlevel: account.staffmodlevel,
+                                    muted_until: account.muted_until,
+                                    members: account.members
+                                }));
+                            }
                             return;
                         } else if (account.logged_in !== 0) {
                             // already logged in elsewhere
@@ -155,35 +211,52 @@ export default class LoginServer {
                             ip: remoteAddress
                         }).execute();
 
+                        if (!fs.existsSync(`data/players/${profile}/${username}.sav`)) {
+                            // not an error - never logged in before
+                            // ^ Only not an error if the user has never logged in before:
+                            if (account.logout_time !== null) {
+                                console.error('on login, account_id %s had no save data on disk!', account.id);
+                                this.rejectLoginForSafety(s, replyTo);
+                                return;
+                            } else {
+                                s.send(JSON.stringify({
+                                    replyTo,
+                                    response: 4,
+                                    account_id: account.id,
+                                    staffmodlevel: account.staffmodlevel,
+                                    muted_until: account.muted_until
+                                }));
+                            }
+                        } else {
+
+                            const save = await fsp.readFile(`data/players/${profile}/${username}.sav`);
+                            // Extreme safety check for savefile existing but having bad data on read:
+                            if (!save || !PlayerLoading.verify(new Packet(save))) {
+                                console.error('on login, account_id %s had invalid save data on disk!', account.id);
+                                this.rejectLoginForSafety(s, replyTo);
+                                return;
+                            }
+                            s.send(JSON.stringify({
+                                replyTo,
+                                response: 0,
+                                account_id: account.id,
+                                staffmodlevel: account.staffmodlevel,
+                                save: save.toString('base64'),
+                                muted_until: account.muted_until,
+                                members: account.members
+                            }));
+                        }
+
+                        // Login is valid - update account table
                         await db.updateTable('account').set({
                             logged_in: nodeId,
                             login_time: toDbDate(new Date())
                         }).where('id', '=', account.id).executeTakeFirst();
-
-                        if (!fs.existsSync(`data/players/${profile}/${username}.sav`)) {
-                            // not an error - never logged in before
-                            s.send(JSON.stringify({
-                                replyTo,
-                                response: 4,
-                                staffmodlevel: account.staffmodlevel,
-                                muted_until: account.muted_until
-                            }));
-                            return;
-                        }
-
-                        const save = await fsp.readFile(`data/players/${profile}/${username}.sav`);
-                        s.send(JSON.stringify({
-                            replyTo,
-                            response: 0,
-                            staffmodlevel: account.staffmodlevel,
-                            save: save.toString('base64'),
-                            muted_until: account.muted_until
-                        }));
                     } else if (type === 'player_logout') {
                         const { replyTo, username, save } = msg;
 
                         const raw = Buffer.from(save, 'base64');
-                        if (PlayerLoading.verify(new Packet(raw))) {
+                        if (PlayerLoading.verify(new Packet(raw)) && !(await this.wouldResetSaveFile(raw, profile, username))) {
                             if (!fs.existsSync(`data/players/${profile}`)) {
                                 await fsp.mkdir(`data/players/${profile}`, { recursive: true });
                             }
@@ -208,7 +281,7 @@ export default class LoginServer {
                         const { username, save } = msg;
 
                         const raw = Buffer.from(save, 'base64');
-                        if (PlayerLoading.verify(new Packet(raw))) {
+                        if (PlayerLoading.verify(new Packet(raw)) && !(await this.wouldResetSaveFile(raw, profile, username))) {
                             if (!fs.existsSync(`data/players/${profile}`)) {
                                 await fsp.mkdir(`data/players/${profile}`, { recursive: true });
                             }
@@ -240,10 +313,6 @@ export default class LoginServer {
                         await db.updateTable('account').set({
                             muted_until: toDbDate(until)
                         }).where('username', '=', username).executeTakeFirst();
-                    } else if (type === 'world_heartbeat') {
-                        const { names } = msg;
-
-                        // todo: ensure no accounts are locked
                     }
                 } catch (err) {
                     console.error(err);

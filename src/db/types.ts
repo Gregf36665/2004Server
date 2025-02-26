@@ -20,6 +20,7 @@ export type account = {
     staffmodlevel: Generated<number>;
     notes: string | null;
     notes_updated: string | null;
+    members: Generated<boolean>;
 };
 export type account_session = {
     id: Generated<number>;
@@ -35,6 +36,7 @@ export type account_session = {
 export type friendlist = {
     account_id: number;
     friend_account_id: number;
+    created: Generated<string>;
 };
 export type hiscore = {
     profile: Generated<string>;
@@ -54,7 +56,30 @@ export type hiscore_large = {
 };
 export type ignorelist = {
     account_id: number;
-    ignore_account_id: number;
+    value: string;
+    created: Generated<string>;
+};
+export type input_report = {
+    id: Generated<number>;
+    account_id: number;
+    timestamp: string;
+    session_uuid: string;
+};
+export type input_report_event = {
+    input_report_id: number;
+    seq: number;
+    input_type: Generated<number>;
+    delta: number;
+    coord: number;
+    mouse_x: number | null;
+    mouse_y: number | null;
+    key_code: number | null;
+};
+export type input_report_event_raw = {
+    input_report_id: number;
+    seq: number;
+    coord: number;
+    data: Buffer;
 };
 export type ipban = {
     ip: string;
@@ -120,6 +145,9 @@ export type DB = {
     hiscore: hiscore;
     hiscore_large: hiscore_large;
     ignorelist: ignorelist;
+    input_report: input_report;
+    input_report_event: input_report_event;
+    input_report_event_raw: input_report_event_raw;
     ipban: ipban;
     login: login;
     newspost: newspost;
