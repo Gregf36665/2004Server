@@ -8,7 +8,9 @@ export type account = {
     id: Generated<number>;
     username: string;
     password: string;
+    password_updated: string | null;
     email: string | null;
+    oauth_provider: string | null;
     registration_ip: string | null;
     registration_date: Generated<string>;
     logged_in: Generated<number>;
@@ -20,7 +22,11 @@ export type account = {
     staffmodlevel: Generated<number>;
     notes: string | null;
     notes_updated: string | null;
-    members: Generated<boolean>;
+    members: Generated<number>;
+    tfa_enabled: Generated<number>;
+    tfa_last_code: Generated<number>;
+    tfa_secret_base32: string | null;
+    tfa_incorrect_attempts: Generated<number>;
 };
 export type account_session = {
     id: Generated<number>;
@@ -32,6 +38,10 @@ export type account_session = {
     coord: number;
     event: string;
     event_type: Generated<number>;
+};
+export type account_tag = {
+    tag_id: number;
+    account_id: number;
 };
 export type friendlist = {
     account_id: number;
@@ -65,16 +75,6 @@ export type input_report = {
     timestamp: string;
     session_uuid: string;
 };
-export type input_report_event = {
-    input_report_id: number;
-    seq: number;
-    input_type: Generated<number>;
-    delta: number;
-    coord: number;
-    mouse_x: number | null;
-    mouse_y: number | null;
-    key_code: number | null;
-};
 export type input_report_event_raw = {
     input_report_id: number;
     seq: number;
@@ -91,6 +91,45 @@ export type login = {
     timestamp: string;
     uid: number;
     ip: string | null;
+};
+export type message = {
+    id: Generated<number>;
+    thread_id: number;
+    sender_id: number;
+    sender_ip: string;
+    sender: Generated<string>;
+    content: string;
+    created: Generated<string>;
+};
+export type message_status = {
+    id: Generated<number>;
+    thread_id: number;
+    account_id: number;
+    read: string | null;
+    deleted: string | null;
+};
+export type message_thread = {
+    id: Generated<number>;
+    to_account_id: number | null;
+    from_account_id: number;
+    last_message_from: number;
+    subject: string;
+    created: Generated<string>;
+    updated: Generated<string>;
+    read: string | null;
+    closed: string | null;
+    to_deleted: string | null;
+    from_deleted: string | null;
+    messages: Generated<number>;
+};
+export type mod_action = {
+    id: Generated<number>;
+    account_id: number;
+    target_id: number | null;
+    action_id: number;
+    data: string | null;
+    ip: string | null;
+    timestamp: Generated<string>;
 };
 export type newspost = {
     id: Generated<number>;
@@ -128,6 +167,7 @@ export type report = {
     coord: number;
     offender: string;
     reason: number;
+    reviewed: Generated<number>;
 };
 export type session = {
     uuid: string;
@@ -138,21 +178,31 @@ export type session = {
     uid: number;
     ip: string | null;
 };
+export type tag = {
+    id: Generated<number>;
+    name: string;
+    color: string | null;
+};
 export type DB = {
     account: account;
     account_session: account_session;
+    account_tag: account_tag;
     friendlist: friendlist;
     hiscore: hiscore;
     hiscore_large: hiscore_large;
     ignorelist: ignorelist;
     input_report: input_report;
-    input_report_event: input_report_event;
     input_report_event_raw: input_report_event_raw;
     ipban: ipban;
     login: login;
+    message: message;
+    message_status: message_status;
+    message_thread: message_thread;
+    mod_action: mod_action;
     newspost: newspost;
     private_chat: private_chat;
     public_chat: public_chat;
     report: report;
     session: session;
+    tag: tag;
 };

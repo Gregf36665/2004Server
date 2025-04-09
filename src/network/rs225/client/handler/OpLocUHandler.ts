@@ -1,13 +1,13 @@
-import MessageHandler from '#/network/client/handler/MessageHandler.js';
-import World from '#/engine/World.js';
-import { NetworkPlayer } from '#/engine/entity/NetworkPlayer.js';
-import OpLocU from '#/network/client/model/OpLocU.js';
 import Component from '#/cache/config/Component.js';
 import ObjType from '#/cache/config/ObjType.js';
-import Interaction from '#/engine/entity/Interaction.js';
+import { Interaction } from '#/engine/entity/Interaction.js';
+import { NetworkPlayer } from '#/engine/entity/NetworkPlayer.js';
 import ServerTriggerType from '#/engine/script/ServerTriggerType.js';
-import Environment from '#/util/Environment.js';
+import World from '#/engine/World.js';
+import MessageHandler from '#/network/client/handler/MessageHandler.js';
+import OpLocU from '#/network/client/model/OpLocU.js';
 import UnsetMapFlag from '#/network/server/model/UnsetMapFlag.js';
+import Environment from '#/util/Environment.js';
 
 export default class OpLocUHandler extends MessageHandler<OpLocU> {
     handle(message: OpLocU, player: NetworkPlayer): boolean {
@@ -19,7 +19,7 @@ export default class OpLocUHandler extends MessageHandler<OpLocU> {
         }
 
         const com = Component.get(comId);
-        if (typeof com === 'undefined' || !player.isComponentVisible(com)) {
+        if (typeof com === 'undefined' || !player.isComponentVisible(com) || !com.interactable) {
             player.write(new UnsetMapFlag());
             player.clearPendingAction();
             return false;

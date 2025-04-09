@@ -382,7 +382,7 @@
 381=human_dspear_stab
 382=human_dspear_pound
 383=human_dspear_def
-384=human_ibanstaff_2h_defend
+384=seq_384
 385=human_holy_water_throw
 386=human_sword_stab
 387=human_sword_defend1
@@ -409,7 +409,7 @@
 408=human_dspear_lunge
 409=human_spear_slash
 410=seq_410
-411=human_2h_sword_defend
+411=human_sword_defend3
 412=human_staff_spike
 413=human_staff_pummel
 414=human_staff_pound
@@ -732,9 +732,9 @@
 731=seq_731
 732=seq_732
 733=human_createfire
-734=seq_734
-735=seq_735
-736=seq_736
+734=human_knockback
+735=human_knockback_long
+736=human_knockback_long_end
 737=seq_737
 738=seq_738
 739=seq_739
@@ -842,7 +842,7 @@
 841=earthwarrior_walk
 842=earthwarrior_ready
 843=earthwarrior_death
-844=seq_844
+844=human_crawling
 845=seq_845
 846=seq_846
 847=human_ready_scythe

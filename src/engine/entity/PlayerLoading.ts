@@ -1,36 +1,31 @@
 import 'dotenv/config';
 
-import Packet from '#/io/Packet.js';
-import { fromBase37, toBase37 } from '#/util/JString.js';
-
-import ClientSocket from '#/server/ClientSocket.js';
-
-import World from '#/engine/World.js';
-
+import InvType from '#/cache/config/InvType.js';
 import { NetworkPlayer } from '#/engine/entity/NetworkPlayer.js';
 import Player, { getExpByLevel, getLevelByExp } from '#/engine/entity/Player.js';
-import {PlayerStat} from '#/engine/entity/PlayerStat.js';
-
-import InvType from '#/cache/config/InvType.js';
+import { PlayerStat } from '#/engine/entity/PlayerStat.js';
+import World from '#/engine/World.js';
+import Packet from '#/io/Packet.js';
+import ClientSocket from '#/server/ClientSocket.js';
+import { fromBase37, toBase37 } from '#/util/JString.js';
 
 export class PlayerLoading {
+    public static readonly SAV_MAGIC: number = 0x2004;
+    public static readonly SAV_VERSION: number = 6;
+
     static verify(sav: Packet) {
-        if (sav.g2() !== 0x2004) {
+        if (sav.g2() !== PlayerLoading.SAV_MAGIC) {
             return false;
         }
 
         const version = sav.g2();
-        if (version > 5) {
+        if (version > PlayerLoading.SAV_VERSION) {
             return false;
         }
 
         sav.pos = sav.data.length - 4;
         const crc = sav.g4();
-        if (crc != Packet.getcrc(sav.data, 0, sav.data.length - 4)) {
-            return false;
-        }
-
-        return true;
+        return crc === Packet.getcrc(sav.data, 0, sav.data.length - 4);
     }
 
     static load(name: string, sav: Packet, client: ClientSocket | null) {
@@ -38,9 +33,7 @@ export class PlayerLoading {
         const name37 = toBase37(name); // always username.
         const safeName = fromBase37(name37); // always safe username.
 
-        const player = client
-            ? new NetworkPlayer(safeName, name37, hash64, client)
-            : new Player(safeName, name37, hash64);
+        const player = client ? new NetworkPlayer(safeName, name37, hash64, client) : new Player(safeName, name37, hash64);
 
         player.lastConnected = World.currentTick;
         player.lastResponse = World.currentTick;
@@ -59,12 +52,12 @@ export class PlayerLoading {
             return player;
         }
 
-        if (sav.g2() !== 0x2004) {
+        if (sav.g2() !== PlayerLoading.SAV_MAGIC) {
             throw new Error('Invalid save file');
         }
 
         const version = sav.g2();
-        if (version > 5) {
+        if (version > PlayerLoading.SAV_VERSION) {
             throw new Error('Unsupported save version');
         }
 
@@ -150,6 +143,11 @@ export class PlayerLoading {
             player.publicChat = (packedChatModes >> 4) & 0b11;
             player.privateChat = (packedChatModes >> 2) & 0b11;
             player.tradeDuel = packedChatModes & 0b11;
+        }
+
+        // last login info
+        if (version >= 6) {
+            player.lastDate = sav.g8();
         }
 
         player.combatLevel = player.getCombatLevel();

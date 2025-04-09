@@ -3949,7 +3949,7 @@ frame8=anim_657
 frame9=anim_2378
 frame10=anim_2079
 
-[human_ibanstaff_2h_defend]
+[seq_384]
 walkmerge=label_1,label_2,label_9,label_11,label_13,label_15,label_17,label_19,label_37,label_39,label_41,label_43,label_45
 frame1=anim_854
 frame2=anim_1134
@@ -4288,7 +4288,7 @@ frame8=anim_2334
 frame9=anim_2030
 frame10=anim_1731
 
-[human_2h_sword_defend]
+[human_sword_defend3]
 walkmerge=label_1,label_2,label_9,label_11,label_13,label_15,label_17,label_19,label_37,label_39,label_41,label_43,label_45
 frame1=anim_2109
 frame2=anim_2407
@@ -9747,7 +9747,7 @@ frame14=anim_575
 frame15=anim_867
 frame16=anim_1145
 
-[seq_734]
+[human_knockback]
 righthand=hide
 lefthand=hide
 frame1=anim_1676
@@ -9785,7 +9785,7 @@ frame32=anim_1135
 frame33=anim_1421
 frame34=anim_1713
 
-[seq_735]
+[human_knockback_long]
 replayoff=12
 frame1=anim_1723
 frame2=anim_2023
@@ -9800,7 +9800,7 @@ frame10=anim_2023
 frame11=anim_2324
 frame12=anim_602
 
-[seq_736]
+[human_knockback_long_end]
 frame1=anim_1265
 frame2=anim_1547
 frame3=anim_1840
@@ -11427,7 +11427,7 @@ frame6=anim_1953
 frame7=anim_2256
 delay7=20000
 
-[seq_844]
+[human_crawling]
 righthand=hide
 lefthand=hide
 frame1=anim_718

@@ -1,15 +1,19 @@
 import fs from 'fs';
-import { loadDir, loadPack } from '#/util/NameMap.js';
-import ParamType from '#/cache/config/ParamType.js';
-import DbTableType from '#/cache/config/DbTableType.js';
-import ScriptVarType from '#/cache/config/ScriptVarType.js';
-import ScriptOpcode from '#/engine/script/ScriptOpcode.js';
-import VarPlayerType from '#/cache/config/VarPlayerType.js';
-import VarNpcType from '#/cache/config/VarNpcType.js';
-import VarSharedType from '#/cache/config/VarSharedType.js';
-import ScriptOpcodePointers from '#/engine/script/ScriptOpcodePointers.js';
+
 import Component from '#/cache/config/Component.js';
+import DbTableType from '#/cache/config/DbTableType.js';
 import InvType from '#/cache/config/InvType.js';
+import ParamType from '#/cache/config/ParamType.js';
+import ScriptVarType from '#/cache/config/ScriptVarType.js';
+import VarNpcType from '#/cache/config/VarNpcType.js';
+import VarPlayerType from '#/cache/config/VarPlayerType.js';
+import VarSharedType from '#/cache/config/VarSharedType.js';
+import { NpcModeMap } from '#/engine/entity/NpcMode.js';
+import { NpcStatMap } from '#/engine/entity/NpcStat.js';
+import { PlayerStatMap } from '#/engine/entity/PlayerStat.js';
+import { ScriptOpcodeMap } from '#/engine/script/ScriptOpcode.js';
+import ScriptOpcodePointers from '#/engine/script/ScriptOpcodePointers.js';
+import { loadDir, loadPack } from '#/util/NameMap.js';
 
 export function generateServerSymbols() {
     fs.mkdirSync('data/symbols', { recursive: true });
@@ -65,9 +69,9 @@ export function generateServerSymbols() {
             continue;
         }
 
-        const type = InvType.get(i);
-        invSymbols += `${i}\t${invs[i]}\n`;
-        writeInvSymbols += `${i}\t${invs[i]}\tnone\t${type.protect}\n`;
+        const inv = InvType.get(i);
+        invSymbols += `${i}\t${inv.debugname}\n`;
+        writeInvSymbols += `${i}\t${inv.debugname}\tnone\t${inv.protect}\n`;
     }
     fs.writeFileSync('data/symbols/inv.sym', invSymbols);
     fs.writeFileSync('data/symbols/writeinv.sym', writeInvSymbols);
@@ -127,17 +131,19 @@ export function generateServerSymbols() {
         }
 
         const com = Component.get(i);
-        if (coms[i].indexOf(':') !== -1) {
-            comSymbols += `${i}\t${coms[i]}\n`;
+        const name = com.comName || coms[i];
+
+        if (name.indexOf(':') !== -1) {
+            comSymbols += `${i}\t${name}\n`;
         } else if (com.overlay) {
-            overlaySymbols += `${i}\t${coms[i]}\n`;
+            overlaySymbols += `${i}\t${name}\n`;
         } else {
-            interfaceSymbols += `${i}\t${coms[i]}\n`;
+            interfaceSymbols += `${i}\t${name}\n`;
         }
 
         // temporary: until compiler updates
         if (com.overlay) {
-            interfaceSymbols += `${i}\t${coms[i]}\n`;
+            interfaceSymbols += `${i}\t${name}\n`;
         }
     }
     fs.writeFileSync('data/symbols/component.sym', comSymbols);
@@ -153,7 +159,7 @@ export function generateServerSymbols() {
         }
 
         const varp = VarPlayerType.get(i);
-        varpSymbols += `${i}\t${varps[i]}\t${ScriptVarType.getType(varp.type)}\t${varp.protect}\n`;
+        varpSymbols += `${i}\t${varp.debugname}\t${ScriptVarType.getType(varp.type)}\t${varp.protect}\n`;
     }
     fs.writeFileSync('data/symbols/varp.sym', varpSymbols);
 
@@ -166,7 +172,7 @@ export function generateServerSymbols() {
         }
 
         const varn = VarNpcType.get(i);
-        varnSymbols += `${i}\t${varns[i]}\t${ScriptVarType.getType(varn.type)}\n`;
+        varnSymbols += `${i}\t${varn.debugname}\t${ScriptVarType.getType(varn.type)}\n`;
     }
     fs.writeFileSync('data/symbols/varn.sym', varnSymbols);
 
@@ -179,7 +185,7 @@ export function generateServerSymbols() {
         }
 
         const vars = VarSharedType.get(i);
-        varsSymbols += `${i}\t${varss[i]}\t${ScriptVarType.getType(vars.type)}\n`;
+        varsSymbols += `${i}\t${vars.debugname}\t${ScriptVarType.getType(vars.type)}\n`;
     }
     fs.writeFileSync('data/symbols/vars.sym', varsSymbols);
 
@@ -193,7 +199,7 @@ export function generateServerSymbols() {
         }
 
         const config = ParamType.get(i);
-        paramSymbols += `${i}\t${params[i]}\t${config.getType()}\n`;
+        paramSymbols += `${i}\t${config.debugname}\t${config.getType()}\n`;
     }
     fs.writeFileSync('data/symbols/param.sym', paramSymbols);
 
@@ -226,7 +232,7 @@ export function generateServerSymbols() {
     fs.writeFileSync('data/symbols/mesanim.sym', mesanimSymbols);
 
     let synthSymbols = '';
-    const synths = loadPack('data/src/pack/sound.pack');
+    const synths = loadPack('data/src/pack/synth.pack');
     for (let i = 0; i < synths.length; i++) {
         synthSymbols += `${i}\t${synths[i]}\n`;
     }
@@ -255,19 +261,19 @@ export function generateServerSymbols() {
     fs.writeFileSync('data/symbols/runescript.sym', scriptSymbols);
 
     let commandSymbols = '';
-    const commands = Object.keys(ScriptOpcode);
-    for (let i = 0; i < commands.length / 2; i++) {
-        const command = ScriptOpcode[commands[i] as any];
-        const pointers = ScriptOpcodePointers[commands[i]];
+    const commands = Array.from(ScriptOpcodeMap.entries())
+        .sort((a, b) => a[1] - b[1]);
+    for (let i = 0; i < commands.length; i++) {
+        const [name, opcode] = commands[i];
+        const pointers = ScriptOpcodePointers[opcode];
 
         // format:
         // opcode<tab>command<tab>require<tab>corrupt<tab>set<tab>conditional<tab>secondary<tab>secondaryRequire
 
-        const opcode = commands[i];
         if (pointers) {
-            commandSymbols += `${opcode}\t${command.toLowerCase()}`;
+            commandSymbols += `${opcode}\t${name.toLowerCase()}`;
         } else {
-            commandSymbols += `${opcode}\t${command.toLowerCase()}\n`;
+            commandSymbols += `${opcode}\t${name.toLowerCase()}\n`;
         }
 
         if (!pointers) {
@@ -351,35 +357,15 @@ export function generateServerSymbols() {
     }
     fs.writeFileSync('data/symbols/dbrow.sym', dbRowSymbols);
 
-    const stats = [
-        'attack',
-        'defence',
-        'strength',
-        'hitpoints',
-        'ranged',
-        'prayer',
-        'magic',
-        'cooking',
-        'woodcutting',
-        'fletching',
-        'fishing',
-        'firemaking',
-        'crafting',
-        'smithing',
-        'mining',
-        'herblore',
-        'agility',
-        'thieving',
-        'stat18',
-        'stat19',
-        'runecraft'
-    ];
+    const playerStats = Array.from(PlayerStatMap.entries())
+        .sort((a, b) => a[1] - b[1])
+        .map(([name, opcode]) => `${opcode}\t${name.toLowerCase()}`);
+    fs.writeFileSync('data/symbols/stat.sym', playerStats.join('\n') + '\n');
 
-    fs.writeFileSync('data/symbols/stat.sym', stats.map((name, index) => `${index}\t${name}`).join('\n') + '\n');
-
-    const npcStats = ['attack', 'defence', 'strength', 'hitpoints', 'ranged', 'magic'];
-
-    fs.writeFileSync('data/symbols/npc_stat.sym', npcStats.map((name, index) => `${index}\t${name}`).join('\n') + '\n');
+    const npcStats = Array.from(NpcStatMap.entries())
+        .sort((a, b) => a[1] - b[1])
+        .map(([name, opcode]) => `${opcode}\t${name.toLowerCase()}`);
+    fs.writeFileSync('data/symbols/npc_stat.sym', npcStats.join('\n') + '\n');
 
     const locshapes = [
         'wall_straight',
@@ -412,56 +398,9 @@ export function generateServerSymbols() {
     const fonts = ['p11', 'p12', 'b12', 'q8'];
     fs.writeFileSync('data/symbols/fontmetrics.sym', fonts.map((name, index) => `${index}\t${name}`).join('\n') + '\n');
 
-    const npcmodes = [
-        '-1\tnull',
-        '0\tnone',
-        '1\twander',
-        '2\tpatrol',
-        '3\tplayerescape',
-        '4\tplayerfollow',
-        '5\tplayerface',
-        '6\tplayerfaceclose',
-        '7\topplayer1',
-        '8\topplayer2',
-        '9\topplayer3',
-        '10\topplayer4',
-        '11\topplayer5',
-        '12\tapplayer1',
-        '13\tapplayer2',
-        '14\tapplayer3',
-        '15\tapplayer4',
-        '16\tapplayer5',
-        '17\toploc1',
-        '18\toploc2',
-        '19\toploc3',
-        '20\toploc4',
-        '21\toploc5',
-        '22\taploc1',
-        '23\taploc2',
-        '24\taploc3',
-        '25\taploc4',
-        '26\taploc5',
-        '27\topobj1',
-        '28\topobj2',
-        '29\topobj3',
-        '30\topobj4',
-        '31\topobj5',
-        '32\tapobj1',
-        '33\tapobj2',
-        '34\tapobj3',
-        '35\tapobj4',
-        '36\tapobj5',
-        '37\topnpc1',
-        '38\topnpc2',
-        '39\topnpc3',
-        '40\topnpc4',
-        '41\topnpc5',
-        '42\tapnpc1',
-        '43\tapnpc2',
-        '44\tapnpc3',
-        '45\tapnpc4',
-        '46\tapnpc5'
-    ];
+    const npcmodes = Array.from(NpcModeMap.entries())
+        .sort((a, b) => a[1] - b[1])
+        .map(([name, opcode]) => `${opcode}\t${name.toLowerCase()}`);
     fs.writeFileSync('data/symbols/npc_mode.sym', npcmodes.join('\n') + '\n');
 
     // ----

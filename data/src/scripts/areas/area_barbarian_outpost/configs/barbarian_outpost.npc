@@ -1,4 +1,4 @@
-[npc_197]
+[barbarian_guard]
 name=Barbarian guard
 desc=Not very civilised looking.
 walkanim=human_walk_f,human_walk_b,human_walk_l,human_walk_r
@@ -42,7 +42,7 @@ param=damagetype,^slash_style
 param=attack_anim,human_baxe_slash
 param=defend_anim,human_baxe_defend1
 param=attack_sound,baxe_slash
-// param=defend_sound,swordclash2
+param=defend_sound,swordclash2
 // animations and sounds taken Gunthor the Brave
 // attackbonus is guess taken gunthor the brave
 // https://raw.githubusercontent.com/Joshua-F/osrs-dumps/refs/heads/master/config/dump.npc npc_1028

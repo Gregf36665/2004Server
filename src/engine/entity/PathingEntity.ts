@@ -1,28 +1,24 @@
-import World from '#/engine/World.js';
-import ServerTriggerType from '#/engine/script/ServerTriggerType.js';
-import { CoordGrid } from '#/engine/CoordGrid.js';
-
-import BlockWalk from '#/engine/entity/BlockWalk.js';
-import Entity from '#/engine/entity/Entity.js';
-import Npc from '#/engine/entity/Npc.js';
-import Loc from '#/engine/entity/Loc.js';
-import Interaction from '#/engine/entity/Interaction.js';
-import Player from '#/engine/entity/Player.js';
-import NpcMode from '#/engine/entity/NpcMode.js';
-import MoveRestrict from '#/engine/entity/MoveRestrict.js';
-import MoveSpeed from '#/engine/entity/MoveSpeed.js';
-import EntityLifeCycle from '#/engine/entity/EntityLifeCycle.js';
-import MoveStrategy from '#/engine/entity/MoveStrategy.js';
-import Obj from '#/engine/entity/Obj.js';
-import NonPathingEntity from '#/engine/entity/NonPathingEntity.js';
-
-import LocType from '#/cache/config/LocType.js';
-
-import Environment from '#/util/Environment.js';
-
 import { CollisionFlag, CollisionType } from '@2004scape/rsmod-pathfinder';
 
-import { canTravel, changeNpcCollision, changePlayerCollision, findNaivePath, findPath, findPathToEntity, findPathToLoc, isApproached, reachedEntity, reachedLoc, reachedObj } from '#/engine/GameMap.js';
+import LocType from '#/cache/config/LocType.js';
+import { CoordGrid } from '#/engine/CoordGrid.js';
+import { BlockWalk } from '#/engine/entity/BlockWalk.js';
+import Entity from '#/engine/entity/Entity.js';
+import { EntityLifeCycle } from '#/engine/entity/EntityLifeCycle.js';
+import { Interaction } from '#/engine/entity/Interaction.js';
+import Loc from '#/engine/entity/Loc.js';
+import { MoveRestrict } from '#/engine/entity/MoveRestrict.js';
+import { MoveSpeed } from '#/engine/entity/MoveSpeed.js';
+import { MoveStrategy } from '#/engine/entity/MoveStrategy.js';
+import NonPathingEntity from '#/engine/entity/NonPathingEntity.js';
+import Npc from '#/engine/entity/Npc.js';
+import { NpcMode } from '#/engine/entity/NpcMode.js';
+import Obj from '#/engine/entity/Obj.js';
+import Player from '#/engine/entity/Player.js';
+import { canTravel, changeNpcCollision, changePlayerCollision, findNaivePath, findPath, findPathToEntity, findPathToLoc, isApproached, isZoneAllocated, reachedEntity, reachedLoc, reachedObj } from '#/engine/GameMap.js';
+import ServerTriggerType from '#/engine/script/ServerTriggerType.js';
+import World from '#/engine/World.js';
+import Environment from '#/util/Environment.js';
 
 type TargetSubject = {
     type: number;
@@ -272,6 +268,13 @@ export default abstract class PathingEntity extends Entity {
         }
         level = Math.max(0, Math.min(level, 3));
 
+        if (!isZoneAllocated(level, x, z)) {
+            if (this instanceof Player) {
+                this.messageGame('Invalid teleport!');
+            }
+            return;
+        }
+
         const previousX: number = this.x;
         const previousZ: number = this.z;
         const previousLevel: number = this.level;
@@ -393,6 +396,10 @@ export default abstract class PathingEntity extends Entity {
             // you are not within ap distance of pathing entity if you are underneath it.
             return false;
         }
+        // Los for Npcs is always calculated backwards for all Entity types (tested Player and Npc)
+        if (this instanceof Npc) {
+            return CoordGrid.distanceTo(this, target) <= range && isApproached(this.level, target.x, target.z, this.x, this.z, target.width, target.length, this.width, this.length);
+        }
         return CoordGrid.distanceTo(this, target) <= range && isApproached(this.level, this.x, this.z, target.x, target.z, this.width, this.length, target.width, target.length);
     }
 
@@ -513,16 +520,23 @@ export default abstract class PathingEntity extends Entity {
         }
     }
 
-    setInteraction(interaction: Interaction, target: Entity, op: TargetOp, subject?: TargetSubject): boolean {
+    setInteraction(interaction: Interaction, target: Entity, op: TargetOp, com?: number): boolean {
         if (!target.isValid(this instanceof Player ? this.hash64 : undefined)) {
             return false;
         }
 
         this.target = target;
         this.targetOp = op;
-        this.targetSubject = subject ?? { type: -1, com: -1 };
         this.apRange = 10;
         this.apRangeCalled = false;
+
+        this.targetSubject.com = com ? com : -1;
+        // Remember initial target type for validation
+        if (target instanceof Npc || target instanceof Loc || target instanceof Obj) {
+            this.targetSubject.type = target.type;
+        } else {
+            this.targetSubject.type = -1;
+        }
 
         this.focus(CoordGrid.fine(target.x, target.width), CoordGrid.fine(target.z, target.length), target instanceof NonPathingEntity && interaction === Interaction.ENGINE);
 

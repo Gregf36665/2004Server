@@ -1,10 +1,10 @@
-import MessageHandler from '#/network/client/handler/MessageHandler.js';
+import Component, { ComActionTarget } from '#/cache/config/Component.js';
+import { Interaction } from '#/engine/entity/Interaction.js';
 import { NetworkPlayer } from '#/engine/entity/NetworkPlayer.js';
-import Component from '#/cache/config/Component.js';
-import OpLocT from '#/network/client/model/OpLocT.js';
-import World from '#/engine/World.js';
-import Interaction from '#/engine/entity/Interaction.js';
 import ServerTriggerType from '#/engine/script/ServerTriggerType.js';
+import World from '#/engine/World.js';
+import MessageHandler from '#/network/client/handler/MessageHandler.js';
+import OpLocT from '#/network/client/model/OpLocT.js';
 import UnsetMapFlag from '#/network/server/model/UnsetMapFlag.js';
 
 export default class OpLocTHandler extends MessageHandler<OpLocT> {
@@ -17,7 +17,7 @@ export default class OpLocTHandler extends MessageHandler<OpLocT> {
         }
 
         const spellCom = Component.get(spellComId);
-        if (typeof spellCom === 'undefined' || !player.isComponentVisible(spellCom)) {
+        if (typeof spellCom === 'undefined' || !player.isComponentVisible(spellCom) || (spellCom.actionTarget & ComActionTarget.LOC) === 0) {
             player.write(new UnsetMapFlag());
             player.clearPendingAction();
             return false;
@@ -41,7 +41,7 @@ export default class OpLocTHandler extends MessageHandler<OpLocT> {
         }
 
         player.clearPendingAction();
-        player.setInteraction(Interaction.ENGINE, loc, ServerTriggerType.APLOCT, { type: loc.type, com: spellComId });
+        player.setInteraction(Interaction.ENGINE, loc, ServerTriggerType.APLOCT, spellComId);
         player.opcalled = true;
         return true;
     }

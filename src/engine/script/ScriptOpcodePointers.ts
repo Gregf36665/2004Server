@@ -1,9 +1,9 @@
-import ScriptOpcode from '#/engine/script/ScriptOpcode.js';
+import { ScriptOpcode } from '#/engine/script/ScriptOpcode.js';
 
 const POINTER_GROUP_FIND = ['find_player', 'find_npc', 'find_loc', 'find_obj', 'find_db'];
 
 const ScriptOpcodePointers: {
-    [key: string]: {
+    [key: number]: {
         require?: string[];
         set?: string[];
         corrupt?: string[];
@@ -150,6 +150,10 @@ const ScriptOpcodePointers: {
         set2: ['active_player2'],
         conditional: true
     },
+    [ScriptOpcode.NPC_HUNT]: {
+        set: ['active_npc'],
+        set2: ['active_npc2']
+    },
     [ScriptOpcode.NPC_HUNTALL]: {
         set: ['find_npc']
     },
@@ -162,7 +166,7 @@ const ScriptOpcodePointers: {
     },
     [ScriptOpcode.NPC_HASOP]: {
         require: ['active_npc'],
-        require2: ['active_npc2'],
+        require2: ['active_npc2']
     },
     [ScriptOpcode.IF_CLOSE]: {
         require: ['active_player'],
@@ -327,7 +331,7 @@ const ScriptOpcodePointers: {
         require: ['p_active_player']
     },
     [ScriptOpcode.P_FINDUID]: {
-        set: ['p_active_player', 'active_player' ],
+        set: ['p_active_player', 'active_player'],
         set2: ['p_active_player2', 'active_player2'],
         conditional: true
     },
@@ -461,6 +465,14 @@ const ScriptOpcodePointers: {
         require: ['active_player'],
         require2: ['active_player2']
     },
+    [ScriptOpcode.STAT_BOOST]: {
+        require: ['active_player'],
+        require2: ['active_player2']
+    },
+    [ScriptOpcode.STAT_DRAIN]: {
+        require: ['active_player'],
+        require2: ['active_player2']
+    },
     [ScriptOpcode.UID]: {
         require: ['active_player'],
         require2: ['active_player2']
@@ -501,8 +513,8 @@ const ScriptOpcodePointers: {
         require2: ['active_player2']
     },
     [ScriptOpcode.P_RUN]: {
-        require: ['active_player'],
-        require2: ['active_player2']
+        require: ['p_active_player'],
+        require2: ['p_active_player2']
     },
 
     // Npc ops
@@ -526,6 +538,10 @@ const ScriptOpcodePointers: {
         require: ['active_npc'],
         require2: ['active_npc2']
     },
+    [ScriptOpcode.NPC_CHANGETYPE_KEEPALL]: {
+        require: ['active_npc'],
+        require2: ['active_npc2']
+    },
     [ScriptOpcode.NPC_COORD]: {
         require: ['active_npc'],
         require2: ['active_npc2']
@@ -540,18 +556,7 @@ const ScriptOpcodePointers: {
     },
     [ScriptOpcode.NPC_DELAY]: {
         require: ['active_npc'],
-        corrupt: [
-            'p_active_player',
-            'p_active_player2',
-            ...POINTER_GROUP_FIND,
-            'last_com',
-            'last_int',
-            'last_item',
-            'last_slot',
-            'last_targetslot',
-            'last_useitem',
-            'last_useslot'
-        ],
+        corrupt: ['p_active_player', 'p_active_player2', ...POINTER_GROUP_FIND, 'last_com', 'last_int', 'last_item', 'last_slot', 'last_targetslot', 'last_useitem', 'last_useslot'],
         require2: ['active_npc2']
     },
     [ScriptOpcode.NPC_FACESQUARE]: {
@@ -687,18 +692,7 @@ const ScriptOpcodePointers: {
     },
     [ScriptOpcode.NPC_ARRIVEDELAY]: {
         require: ['active_npc'],
-        corrupt: [
-            'p_active_player',
-            'p_active_player2',
-            ...POINTER_GROUP_FIND,
-            'last_com',
-            'last_int',
-            'last_item',
-            'last_slot',
-            'last_targetslot',
-            'last_useitem',
-            'last_useslot'
-        ],
+        corrupt: ['p_active_player', 'p_active_player2', ...POINTER_GROUP_FIND, 'last_com', 'last_int', 'last_item', 'last_slot', 'last_targetslot', 'last_useitem', 'last_useslot'],
         require2: ['active_npc2']
     },
 
@@ -806,6 +800,17 @@ const ScriptOpcodePointers: {
     [ScriptOpcode.OBJ_FIND]: {
         set: ['active_obj'],
         set2: ['active_obj2']
+    },
+    [ScriptOpcode.OBJ_FINDALLZONE]: {
+        set: ['find_obj'],
+        set2: ['find_obj']
+    },
+    [ScriptOpcode.OBJ_FINDNEXT]: {
+        require: ['find_obj'],
+        set: ['active_obj'],
+        require2: ['find_obj'],
+        set2: ['active_obj2'],
+        conditional: true
     },
 
     // Inventory ops
@@ -941,7 +946,13 @@ const ScriptOpcodePointers: {
     },
     [ScriptOpcode.DB_FIND_REFINE]: {
         require: ['find_db']
-    }
+    },
+    [ScriptOpcode.DB_LISTALL]: {
+        set: ['find_db']
+    },
+    [ScriptOpcode.DB_LISTALL_WITH_COUNT]: {
+        set: ['find_db']
+    },
 };
 
 export default ScriptOpcodePointers;

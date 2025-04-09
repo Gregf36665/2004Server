@@ -1,5 +1,5 @@
 import OutgoingMessage from '#/network/server/OutgoingMessage.js';
-import ServerProtPriority from '#/network/server/prot/ServerProtPriority.js';
+import { ServerProtPriority } from '#/network/server/prot/ServerProtPriority.js';
 import { ChatModePrivate, ChatModePublic, ChatModeTradeDuel } from '#/util/ChatModes.js';
 
 export default class ChatFilterSettings extends OutgoingMessage {
@@ -8,7 +8,7 @@ export default class ChatFilterSettings extends OutgoingMessage {
     constructor(
         readonly publicChat: ChatModePublic,
         readonly privateChat: ChatModePrivate,
-        readonly tradeDuel: ChatModeTradeDuel,
+        readonly tradeDuel: ChatModeTradeDuel
     ) {
         super();
     }

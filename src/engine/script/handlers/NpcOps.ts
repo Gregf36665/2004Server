@@ -1,30 +1,26 @@
-import ParamType from '#/cache/config/ParamType.js';
 import NpcType from '#/cache/config/NpcType.js';
 import { ParamHelper } from '#/cache/config/ParamHelper.js';
+import ParamType from '#/cache/config/ParamType.js';
 import SpotanimType from '#/cache/config/SpotanimType.js';
-
-import World from '#/engine/World.js';
-
-import ScriptOpcode from '#/engine/script/ScriptOpcode.js';
+import { CoordGrid } from '#/engine/CoordGrid.js';
+import Entity from '#/engine/entity/Entity.js';
+import { EntityLifeCycle } from '#/engine/entity/EntityLifeCycle.js';
+import { HuntVis } from '#/engine/entity/hunt/HuntVis.js';
+import { Interaction } from '#/engine/entity/Interaction.js';
+import Loc from '#/engine/entity/Loc.js';
+import Npc from '#/engine/entity/Npc.js';
+import { NpcIteratorType } from '#/engine/entity/NpcIteratorType.js';
+import { NpcMode } from '#/engine/entity/NpcMode.js';
+import { NpcStat } from '#/engine/entity/NpcStat.js';
+import Obj from '#/engine/entity/Obj.js';
+import { NpcIterator } from '#/engine/script/ScriptIterators.js';
+import { ScriptOpcode } from '#/engine/script/ScriptOpcode.js';
 import ScriptPointer, { ActiveNpc, checkedHandler } from '#/engine/script/ScriptPointer.js';
-import ScriptProvider from '#/engine/script/ScriptProvider.js';
 import { CommandHandlers } from '#/engine/script/ScriptRunner.js';
 import ScriptState from '#/engine/script/ScriptState.js';
-import ServerTriggerType from '#/engine/script/ServerTriggerType.js';
-import { NpcIterator } from '#/engine/script/ScriptIterators.js';
-
-import Loc from '#/engine/entity/Loc.js';
-import Obj from '#/engine/entity/Obj.js';
-import { CoordGrid } from '#/engine/CoordGrid.js';
-import NpcIteratorType from '#/engine/entity/NpcIteratorType.js';
-import Npc from '#/engine/entity/Npc.js';
-import NpcMode from '#/engine/entity/NpcMode.js';
-import Entity from '#/engine/entity/Entity.js';
-import Interaction from '#/engine/entity/Interaction.js';
-import HuntVis from '#/engine/entity/hunt/HuntVis.js';
-import EntityLifeCycle from '#/engine/entity/EntityLifeCycle.js';
-
 import { check, CoordValid, DurationValid, HitTypeValid, HuntTypeValid, HuntVisValid, NpcModeValid, NpcStatValid, NpcTypeValid, NumberNotNull, ParamTypeValid, QueueValid, SpotAnimTypeValid } from '#/engine/script/ScriptValidators.js';
+import ServerTriggerType from '#/engine/script/ServerTriggerType.js';
+import World from '#/engine/World.js';
 
 const NpcOps: CommandHandlers = {
     [ScriptOpcode.NPC_FINDUID]: state => {
@@ -116,13 +112,13 @@ const NpcOps: CommandHandlers = {
     },
 
     [ScriptOpcode.NPC_FINDHERO]: checkedHandler(ActiveNpc, state => {
-        const uid = state.activeNpc.heroPoints.findHero();
-        if (uid === -1) {
+        const hash64 = state.activeNpc.heroPoints.findHero();
+        if (hash64 === -1n) {
             state.pushInt(0);
             return;
         }
 
-        const player = World.getPlayerByUid(uid);
+        const player = World.getPlayerByHash64(hash64);
         if (!player) {
             state.pushInt(0);
             return;
@@ -150,12 +146,7 @@ const NpcOps: CommandHandlers = {
         const arg = state.popInt();
         const queueId = check(state.popInt(), QueueValid);
 
-        const npcType: NpcType = check(state.activeNpc.type, NpcTypeValid);
-        const script = ScriptProvider.getByTrigger(ServerTriggerType.AI_QUEUE1 + queueId - 1, npcType.id, npcType.category);
-
-        if (script) {
-            state.activeNpc.enqueueScript(script, delay, arg);
-        }
+        state.activeNpc.enqueueScript(ServerTriggerType.AI_QUEUE1 + queueId - 1, delay, arg);
     }),
 
     [ScriptOpcode.NPC_RANGE]: checkedHandler(ActiveNpc, state => {
@@ -203,6 +194,9 @@ const NpcOps: CommandHandlers = {
         if (mode === NpcMode.NULL || mode === NpcMode.NONE || mode === NpcMode.WANDER || mode === NpcMode.PATROL) {
             state.activeNpc.clearInteraction();
             state.activeNpc.targetOp = mode;
+            if (mode === NpcMode.PATROL) {
+                state.activeNpc.clearPatrol();
+            }
             return;
         }
         state.activeNpc.targetOp = mode;
@@ -223,7 +217,7 @@ const NpcOps: CommandHandlers = {
 
         if (target) {
             if (target instanceof Npc || target instanceof Obj || target instanceof Loc) {
-                state.activeNpc.setInteraction(Interaction.SCRIPT, target, mode, { type: target.type, com: -1 });
+                state.activeNpc.setInteraction(Interaction.SCRIPT, target, mode);
             } else {
                 state.activeNpc.setInteraction(Interaction.SCRIPT, target, mode);
             }
@@ -248,11 +242,11 @@ const NpcOps: CommandHandlers = {
         const npc = state.activeNpc;
         const base = npc.baseLevels[stat];
         const current = npc.levels[stat];
-        const healed = current + (constant + (current * percent) / 100);
+        const healed = current + ((constant + (base * percent) / 100) | 0);
         npc.levels[stat] = Math.min(healed, base);
 
         // reset hero points if hp current == base
-        if (stat === 0 && npc.levels[stat] === npc.baseLevels[stat]) {
+        if (stat === NpcStat.HITPOINTS && npc.levels[NpcStat.HITPOINTS] >= npc.baseLevels[NpcStat.HITPOINTS]) {
             npc.heroPoints.clear();
         }
     }),
@@ -298,13 +292,14 @@ const NpcOps: CommandHandlers = {
         const huntvis: HuntVis = check(checkVis, HuntVisValid);
 
         let closestNpc;
-        let closestDistance = distance;
+        let closestDistance = Number.MAX_SAFE_INTEGER;
 
         const npcs = new NpcIterator(World.currentTick, position.level, position.x, position.z, distance, huntvis, NpcIteratorType.DISTANCE);
 
         for (const npc of npcs) {
             if (npc && npc.type === npcType.id) {
-                const npcDistance = CoordGrid.distanceToSW(position, npc);
+                // Picks the smallest euclidean distance
+                const npcDistance = CoordGrid.euclideanSquaredDistance(position, npc);
                 if (npcDistance <= closestDistance) {
                     closestNpc = npc;
                     closestDistance = npcDistance;
@@ -315,7 +310,7 @@ const NpcOps: CommandHandlers = {
             state.pushInt(0);
             return;
         }
-        // not necessary but if we want to refer to the original npc again, we can
+
         state.activeNpc = closestNpc;
         state.pointerAdd(ActiveNpc[state.intOperand]);
         state.pushInt(1);
@@ -330,11 +325,6 @@ const NpcOps: CommandHandlers = {
         const huntvis: HuntVis = check(checkVis, HuntVisValid);
 
         state.npcIterator = new NpcIterator(World.currentTick, position.level, position.x, position.z, distance, huntvis, NpcIteratorType.DISTANCE);
-        // not necessary but if we want to refer to the original npc again, we can
-        if (state._activeNpc) {
-            state._activeNpc2 = state._activeNpc;
-            state.pointerAdd(ScriptPointer.ActiveNpc2);
-        }
     },
 
     [ScriptOpcode.NPC_FINDALL]: state => {
@@ -346,22 +336,12 @@ const NpcOps: CommandHandlers = {
         const huntvis: HuntVis = check(checkVis, HuntVisValid);
 
         state.npcIterator = new NpcIterator(World.currentTick, position.level, position.x, position.z, distance, huntvis, NpcIteratorType.DISTANCE, npcType);
-        // not necessary but if we want to refer to the original npc again, we can
-        if (state._activeNpc) {
-            state._activeNpc2 = state._activeNpc;
-            state.pointerAdd(ScriptPointer.ActiveNpc2);
-        }
     },
 
     [ScriptOpcode.NPC_FINDALLZONE]: state => {
         const coord: CoordGrid = check(state.popInt(), CoordValid);
 
         state.npcIterator = new NpcIterator(World.currentTick, coord.level, coord.x, coord.z, 0, 0, NpcIteratorType.ZONE);
-        // not necessary but if we want to refer to the original npc again, we can
-        if (state._activeNpc) {
-            state._activeNpc2 = state._activeNpc;
-            state.pointerAdd(ScriptPointer.ActiveNpc2);
-        }
     },
 
     [ScriptOpcode.NPC_FINDNEXT]: state => {
@@ -392,7 +372,19 @@ const NpcOps: CommandHandlers = {
     }),
 
     [ScriptOpcode.NPC_CHANGETYPE]: checkedHandler(ActiveNpc, state => {
-        state.activeNpc.changeType(check(state.popInt(), NpcTypeValid).id);
+        const [id, duration] = state.popInts(2);
+        const npcType: number = check(id, NpcTypeValid).id;
+        check(duration, DurationValid);
+
+        state.activeNpc.changeType(npcType, duration);
+    }),
+
+    [ScriptOpcode.NPC_CHANGETYPE_KEEPALL]: checkedHandler(ActiveNpc, state => {
+        const [id, duration] = state.popInts(2);
+        const npcType: number = check(id, NpcTypeValid).id;
+        check(duration, DurationValid);
+
+        state.activeNpc.changeType(npcType, duration, false);
     }),
 
     [ScriptOpcode.NPC_GETMODE]: checkedHandler(ActiveNpc, state => {
@@ -401,7 +393,7 @@ const NpcOps: CommandHandlers = {
 
     // https://x.com/JagexAsh/status/1704492467226091853
     [ScriptOpcode.NPC_HEROPOINTS]: checkedHandler([ScriptPointer.ActivePlayer, ...ActiveNpc], state => {
-        state.activeNpc.heroPoints.addHero(state.activePlayer.uid, check(state.popInt(), NumberNotNull));
+        state.activeNpc.heroPoints.addHero(state.activePlayer.hash64, check(state.popInt(), NumberNotNull));
     }),
 
     // https://x.com/JagexAsh/status/1780932943038345562
@@ -422,11 +414,12 @@ const NpcOps: CommandHandlers = {
         check(percent, NumberNotNull);
 
         const npc = state.activeNpc;
+        const base = npc.baseLevels[stat];
         const current = npc.levels[stat];
-        const added = current + (constant + (current * percent) / 100);
+        const added = current + ((constant + (base * percent) / 100) | 0);
         npc.levels[stat] = Math.min(added, 255);
 
-        if (stat === 0 && npc.levels[stat] >= npc.baseLevels[stat]) {
+        if (stat === NpcStat.HITPOINTS && npc.levels[NpcStat.HITPOINTS] >= npc.baseLevels[NpcStat.HITPOINTS]) {
             npc.heroPoints.clear();
         }
     }),
@@ -439,8 +432,9 @@ const NpcOps: CommandHandlers = {
         check(percent, NumberNotNull);
 
         const npc = state.activeNpc;
+        const base = npc.baseLevels[stat];
         const current = npc.levels[stat];
-        const subbed = current - (constant + (current * percent) / 100);
+        const subbed = current - ((constant + (base * percent) / 100) | 0);
         npc.levels[stat] = Math.max(subbed, 0);
     }),
 

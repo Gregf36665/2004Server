@@ -1,12 +1,12 @@
-import MessageHandler from '#/network/client/handler/MessageHandler.js';
-import Player from '#/engine/entity/Player.js';
-import InvButtonD from '#/network/client/model/InvButtonD.js';
 import Component from '#/cache/config/Component.js';
-import Environment from '#/util/Environment.js';
+import Player from '#/engine/entity/Player.js';
 import ScriptProvider from '#/engine/script/ScriptProvider.js';
 import ScriptRunner from '#/engine/script/ScriptRunner.js';
 import ServerTriggerType from '#/engine/script/ServerTriggerType.js';
+import MessageHandler from '#/network/client/handler/MessageHandler.js';
+import InvButtonD from '#/network/client/model/InvButtonD.js';
 import UpdateInvPartial from '#/network/server/model/UpdateInvPartial.js';
+import Environment from '#/util/Environment.js';
 
 export default class InvButtonDHandler extends MessageHandler<InvButtonD> {
     handle(message: InvButtonD, player: Player): boolean {
@@ -14,7 +14,7 @@ export default class InvButtonDHandler extends MessageHandler<InvButtonD> {
         const { component: comId, slot, targetSlot } = message;
 
         const com = Component.get(comId);
-        if (typeof com === 'undefined' || !player.isComponentVisible(com)) {
+        if (typeof com === 'undefined' || !player.isComponentVisible(com) || !com.draggable) {
             return false;
         }
 
@@ -24,7 +24,7 @@ export default class InvButtonDHandler extends MessageHandler<InvButtonD> {
         }
 
         const inv = player.getInventoryFromListener(listener);
-        if (!inv || !inv.validSlot(slot) || !inv.validSlot(targetSlot)) {
+        if (!inv || !inv.validSlot(slot) || !inv.validSlot(targetSlot) || !inv.get(slot)) {
             return false;
         }
 
